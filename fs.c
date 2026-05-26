@@ -442,7 +442,16 @@ bool fs_remove_hardlink(Filesystem *fs, INode *hardlink) {
     for(size_t i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
         if(fs_getINode(fs, parent->directory.children[i]) == hardlink) {
             found = true;
-            parent->directory.children[i] = (i == FS_INODE_DIRECTORY_CHILDREN_LEN - 1) ? FS_NONE : parent->directory.children[i + 1];
+            parent->directory.children[i] = FS_NONE;
+        }
+
+        if(!found) continue;
+
+        if(i < FS_INODE_DIRECTORY_CHILDREN_LEN - 1) {
+            parent->directory.children[i] = parent->directory.children[i + 1];
+        }
+        else {
+            parent->directory.children[i] = FS_NONE;
         }
     }
 
@@ -499,6 +508,7 @@ size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_
     for(size_t i = 0; i < blockOffset; i++) {
         if(inode->rawfile.blocks[i] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
+            printf("BLOCK %d\n", new);
             if(new == FS_NONE) return SIZE_MAX;
 
             inode->rawfile.blocks[i] = new;
@@ -510,13 +520,14 @@ size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_
     do {
         if(inode->rawfile.blocks[blockOffset] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
+            printf("BLOCK %d\n", new);
             if(new == FS_NONE) return pos;
 
             inode->rawfile.blocks[blockOffset] = new;
         }
 
         size_t chunkLength = FS_MIN(fs->header.blockSize - firstBlockOffset, len);
-        memcpy(fs_getBlockPointer(fs, blockOffset) + firstBlockOffset, buffer + pos, chunkLength);
+        memcpy(fs_getBlockPointer(fs, inode->rawfile.blocks[blockOffset]) + firstBlockOffset, buffer + pos, chunkLength);
         firstBlockOffset = 0;
 
         pos += chunkLength;
@@ -547,7 +558,7 @@ size_t fs_read(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t
         if(inode->rawfile.blocks[blockOffset] == FS_NONE) break;
 
         size_t chunkLength = FS_MIN(fs->header.blockSize - firstBlockOffset, len);
-        memcpy(buffer + pos, fs_getBlockPointer(fs, blockOffset) + firstBlockOffset, chunkLength);
+        memcpy(buffer + pos, fs_getBlockPointer(fs, inode->rawfile.blocks[blockOffset]) + firstBlockOffset, chunkLength);
         firstBlockOffset = 0;
 
         pos += chunkLength;
@@ -678,6 +689,8 @@ INode *fs_locate(Filesystem *fs, INode *current, FS_Path *path) {
     }
 
     if(next->type == FS_INODE_HARDLINK && next->hardlink.isSymlink) {
+        printf("LINK\n");
+
         INode *file = fs_getINode(fs, next->hardlink.file);
         uint8_t *buffer = calloc(file->rawfile.size, sizeof(uint8_t));
         fs_read(fs, file, buffer, file->rawfile.size, 0);

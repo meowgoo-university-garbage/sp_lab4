@@ -177,6 +177,47 @@ bool fscli_iteration(Filesystem *fs) {
             printf("File created\n");
         }
     }
+    COMMAND("lns") {
+        POP_FILE_NAME(name);
+        POP_FILE_NAME(path);
+
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+
+        INodeIndex hardlink = fs_create_hardlink(fs, fs_indexFromINode(fs, cwd), fscli_strinode(name), FS_NONE, true);
+        if(hardlink == FS_NONE) {
+            printf("Couldn't create the symlink\n");
+            return true;
+        }
+
+        printf("Symlink created\n");
+        fs_write(fs, fs_getINode(fs, fs_getINode(fs, hardlink)->hardlink.file), (uint8_t *)path.str, path.len, 0);
+    }
+    COMMAND("togglelink") {
+        POP_FILE_NAME(name);
+        POP_INT(link);
+
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locateInDirectory(fs, cwd, fscli_strinode(name));
+
+        if(inode == null) {
+            printf("File not found\n");
+            return true;
+        }
+
+        if(inode->type != FS_INODE_HARDLINK) {
+            printf("File must be a hardlink\n");
+            return true;
+        }
+
+        if(link == 0) {
+            inode->hardlink.isSymlink = false;
+            printf("Symlink disabled\n");
+        }
+        else {
+            inode->hardlink.isSymlink = true;
+            printf("Symlink enabled\n");
+        }
+    }
     COMMAND("mkdir") {
         POP_FILE_NAME(name);
 
@@ -283,7 +324,7 @@ bool fscli_iteration(Filesystem *fs) {
         }
 
         FS_Descriptor fd = fs_open(fs, inode->hardlink.file);
-        if(fd == 0) {
+        if(fd == FS_NONE) {
             printf("Couldn't open the file\n");
             return true;
         }
