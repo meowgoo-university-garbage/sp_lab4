@@ -4,25 +4,6 @@
 
 #include "fs.c"
 
-typedef struct {
-    char *str;
-    size_t len;
-} FS_StringView;
-
-FS_StringView fscli_str(char *s) {
-    return (FS_StringView){
-        s,
-        strlen(s),
-    };
-}
-
-INodeString fscli_strinode(FS_StringView sv) {
-    INodeString s = {0};
-    memcpy(s.str, sv.str, sv.len);
-    s.len = sv.len;
-    return s;
-}
-
 FS_StringView fscli_popWord(FS_StringView *line) {
     while(line->len > 0 && line->str[0] == ' ') {
         line->str += 1;
@@ -157,7 +138,7 @@ bool fscli_iteration(Filesystem *fs) {
     COMMAND("touch") {
         POP_FILE_NAME(name);
 
-        INodeIndex hardlink = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(name), FS_NONE);
+        INodeIndex hardlink = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(name), FS_NONE, false);
         if(hardlink == FS_NONE) {
             printf("Couldn't create the file\n");
         }
@@ -168,13 +149,14 @@ bool fscli_iteration(Filesystem *fs) {
     COMMAND("stat") {
         POP_FILE_NAME(name);
 
-        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
-        if(index == FS_NONE) {
+        FS_Path *path = fs_pathFromString(name);
+        INode *inode = fs_locate(fs, null, path);
+        fs_freePath(path);
+
+        if(inode == null) {
             printf("File not found\n");
             return true;
         }
-
-        INode *inode = fs_getINode(fs, index);
 
         if(0) {}
         else if(inode->type == FS_INODE_HARDLINK) {
@@ -182,7 +164,7 @@ bool fscli_iteration(Filesystem *fs) {
 
             printf("Name: \"%.*s\"\n", inode->hardlink.name.len, inode->hardlink.name.str);
             printf("Size: %ld\n", file->rawfile.size);
-            printf("Hardlink INode: %d\n", index);
+            printf("Hardlink INode: %d\n", 0);
             printf("Rawfile  INode: %d\n", inode->hardlink.file);
         }
         else {
@@ -218,12 +200,15 @@ bool fscli_iteration(Filesystem *fs) {
     COMMAND("open") {
         POP_FILE_NAME(name);
 
-        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
-        if(index == FS_NONE) {
+        FS_Path *path = fs_pathFromString(name);
+        INode *inode = fs_locate(fs, null, path);
+        fs_freePath(path);
+
+        if(inode == null) {
             printf("File not found\n");
             return true;
         }
-        INode *inode = fs_getINode(fs, index);
+
         if(inode->type != FS_INODE_HARDLINK) {
             printf("Only hardlinks can be opened\n");
             return true;
@@ -325,18 +310,21 @@ bool fscli_iteration(Filesystem *fs) {
         POP_FILE_NAME(originalName);
         POP_FILE_NAME(copyName);
 
-        INodeIndex index = fs_locate(fs, null, fscli_strinode(originalName));
-        if(index == FS_NONE) {
+        FS_Path *path = fs_pathFromString(originalName);
+        INode *inode = fs_locate(fs, null, path);
+        fs_freePath(path);
+
+        if(inode == null) {
             printf("File not found\n");
             return true;
         }
-        INode *inode = fs_getINode(fs, index);
+        
         if(inode->type != FS_INODE_HARDLINK) {
             printf("Only hardlinks can be linked\n");
             return true;
         }
 
-        INodeIndex copy = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(copyName), inode->hardlink.file);
+        INodeIndex copy = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(copyName), inode->hardlink.file, false);
         if(copy == FS_NONE) {
             printf("Failed to link\n");
             return true;
@@ -347,18 +335,21 @@ bool fscli_iteration(Filesystem *fs) {
     COMMAND("rm") {
         POP_FILE_NAME(name);
 
-        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
-        if(index == FS_NONE) {
+        FS_Path *path = fs_pathFromString(name);
+        INode *inode = fs_locate(fs, null, path);
+        fs_freePath(path);
+
+        if(inode == null) {
             printf("File not found\n");
             return true;
         }
-        INode *inode = fs_getINode(fs, index);
+
         if(inode->type != FS_INODE_HARDLINK) {
             printf("Only hardlinks can be removed\n");
             return true;
         }
 
-        bool result = fs_remove_hardlink(fs, index);
+        bool result = fs_remove_hardlink(fs, inode);
         if(result) {
             printf("Removed file\n");
         }
@@ -389,12 +380,15 @@ bool fscli_iteration(Filesystem *fs) {
         POP_FILE_NAME(name);
         POP_INT(len);
 
-        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
-        if(index == FS_NONE) {
+        FS_Path *path = fs_pathFromString(name);
+        INode *inode = fs_locate(fs, null, path);
+        fs_freePath(path);
+
+        if(inode == null) {
             printf("File not found\n");
             return true;
         }
-        INode *inode = fs_getINode(fs, index);
+
         if(inode->type != FS_INODE_HARDLINK) {
             printf("Only files can be truncated\n");
             return true;

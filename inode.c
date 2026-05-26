@@ -42,6 +42,8 @@ typedef struct {
         struct {
             INodeString name;
             INodeIndex  parent;
+
+            bool isSymlink;
             INodeIndex  file;
         } hardlink;
         struct {

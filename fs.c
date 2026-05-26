@@ -37,17 +37,111 @@ typedef struct {
 } FS_DescriptorInfo;
 typedef int FS_Descriptor;
 
+typedef struct FS_Path FS_Path;
+struct FS_Path {
+    INodeString segment;
+    FS_Path *next;
+};
+
+typedef struct {
+    char *str;
+    size_t len;
+} FS_StringView;
+
+FS_StringView fscli_str(char *s) {
+    return (FS_StringView){
+        s,
+        strlen(s),
+    };
+}
+
+INodeString fscli_strinode(FS_StringView sv) {
+    INodeString s = {0};
+    memcpy(s.str, sv.str, sv.len);
+    s.len = sv.len;
+    return s;
+}
+
 typedef struct {
     char *data;
 
     FS_Header header;
     FS_BlockAvailability *blockAvailability;
     INode *inodes;
+    
+    FS_Path *cwd;
 
-    // TODO: ideally should be unlimited but im lazy
 #define FS_DESCRIPTORS 10
     FS_DescriptorInfo descriptors[FS_DESCRIPTORS];
 } Filesystem;
+
+
+
+
+INode *fs_getINode(Filesystem *fs, INodeIndex index) {
+    if(index >= fs->header.count_inodes) return null;
+    return &fs->inodes[index];
+}
+
+INode *fs_root(Filesystem *fs) {
+    return fs_getINode(fs, FS_ROOT);
+}
+
+
+FS_Path *fs_pathFromINode(Filesystem *fs, INode *inode, FS_Path *tail) {
+    FS_Path *segment = calloc(1, sizeof(FS_Path));
+
+    // TODO: hardlinks and directories have the same field offset for name and parent, but this is not reliable
+    segment->segment = inode->hardlink.name;
+    segment->next = tail;
+
+    INodeIndex nexti = inode->hardlink.parent;
+    INode *next = fs_getINode(fs, nexti);
+
+    if(next == inode) return segment;
+
+    return fs_pathFromINode(fs, next, segment);
+}
+
+FS_Path *fs_pathFromString(FS_StringView sv) {
+    FS_StringView segment = { .str = sv.str, .len = 0, };
+
+    while(sv.len > 0 && sv.str[0] != '/') {
+        segment.len += 1;
+        sv.str += 1;
+        sv.len -= 1;
+    }
+
+    // NOTE: empty segment with no '/' following, meaning no segment
+    if(segment.len == 0 && sv.len == 0) return null;
+
+    if(sv.len != 0) {
+        sv.str += 1;
+        sv.len -= 1;
+    }
+
+    FS_Path *psegment = calloc(1, sizeof(FS_Path));
+    psegment->segment = fscli_strinode(segment);
+    psegment->next = fs_pathFromString(sv);
+
+    return psegment;
+}
+
+void fs_freePath(FS_Path *path) {
+    if(path == null) return;
+    FS_Path *next = path->next;
+    free(path);
+    fs_freePath(next);
+}
+
+void fs_appendPath(FS_Path *main, FS_Path *tail) {
+    if(main->next == null) {
+        main->next = tail;
+        return;
+    }
+
+    fs_appendPath(main->next, tail);
+}
 
 
 size_t fs_groupCount(size_t amount, size_t groupSize) {
@@ -167,41 +261,6 @@ Filesystem fs_initialize(char *data, size_t len, size_t blockSize, size_t inodeC
     return fs;
 }
 
-INode *fs_getINode(Filesystem *fs, INodeIndex index) {
-    if(index >= fs->header.count_inodes) return null;
-    return &fs->inodes[index];
-}
-
-INode *fs_root(Filesystem *fs) {
-    return fs_getINode(fs, FS_ROOT);
-}
-
-INodeIndex fs_locate(Filesystem *fs, INode *parent, INodeString path) {
-    // TODO: for now we define path to be the name of a file in root directory 
-
-    if(parent == null) parent = fs_root(fs);
-
-    for(int i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
-        INodeIndex index = parent->directory.children[i];
-        if(index == 0) return FS_NONE;
-
-        INode *child = &fs->inodes[index];
-        
-        if(0){}
-        else if(child->type == FS_INODE_HARDLINK) {
-            if(fs_strcmp(path, child->hardlink.name)) return index;
-        }
-        else if(child->type == FS_INODE_DIRECTORY) {
-            if(fs_strcmp(path, child->directory.name)) return index;
-        }
-        else {
-            continue;
-        }
-    }
-
-    return FS_NONE;
-}
-
 size_t fs_getDirectoryChildren(INode *dir) {
     if(dir->type != FS_INODE_DIRECTORY) return 0;
 
@@ -273,7 +332,7 @@ bool fs_remove_rawfile(Filesystem *fs, INode *rawfile) {
     return true;
 }
 
-INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString name, INodeIndex rawfile) {
+INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString name, INodeIndex rawfile, bool isSymlink) {
     if(parenti == 0) parenti = FS_ROOT;
 
     INode *parent = fs_getINode(fs, parenti);
@@ -308,6 +367,7 @@ INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString na
         .hardlink = {
             .name = name,
             .parent = parenti,
+            .isSymlink = isSymlink,
             .file = rawfile,
         }
     };
@@ -336,14 +396,13 @@ void fs_checkRawFile(Filesystem *fs, INode *rawfile) {
     }
 }
 
-bool fs_remove_hardlink(Filesystem *fs, INodeIndex hardlinki) {
-    INode *hardlink = fs_getINode(fs, hardlinki);
+bool fs_remove_hardlink(Filesystem *fs, INode *hardlink) {
     if(hardlink->type != FS_INODE_HARDLINK) return false;
 
     bool found = false;
     INode *parent = fs_getINode(fs, hardlink->hardlink.parent);
     for(size_t i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
-        if(parent->directory.children[i] == hardlinki) {
+        if(fs_getINode(fs, parent->directory.children[i]) == hardlink) {
             found = true;
             parent->directory.children[i] = (i == FS_INODE_DIRECTORY_CHILDREN_LEN - 1) ? FS_NONE : parent->directory.children[i + 1];
         }
@@ -500,4 +559,65 @@ void fs_truncate(Filesystem *fs, INode *inode, size_t newSize) {
         inode->rawfile.size = newSize;
         fs_checkRawFile(fs, inode);
     }
+}
+
+
+INode *fs_locateInDirectory(Filesystem *fs, INode *directory, INodeString name) {
+    for(int i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
+        INodeIndex index = directory->directory.children[i];
+        if(index == 0) return null;
+
+        INode *child = &fs->inodes[index];
+        
+        if(0){}
+        else if(child->type == FS_INODE_HARDLINK) {
+            if(fs_strcmp(name, child->hardlink.name)) return child;
+        }
+        else if(child->type == FS_INODE_DIRECTORY) {
+            if(fs_strcmp(name, child->directory.name)) return child;
+        }
+        else {
+            continue;
+        }
+    }
+
+    return null;
+}
+
+INode *fs_locate(Filesystem *fs, INode *current, FS_Path *path) {
+    if(current == null) current = fs_root(fs);
+
+    // NOTE: we do NOT want to recurse if `current` is a symlink, because we want to append the path to the current
+    // path so it gets freed eventually
+
+    if(current->type != FS_INODE_DIRECTORY) return null;
+
+    if(path == null) return current;
+    if(fs_strcmp(path->segment, fs_str("")))    return fs_locate(fs, fs_root(fs), path->next);
+    if(fs_strcmp(path->segment, fs_str(".")))   return fs_locate(fs, current, path->next);
+    if(fs_strcmp(path->segment, fs_str("..")))  return fs_locate(fs, fs_getINode(fs, current->directory.parent), path->next);
+
+    INode *next = fs_locateInDirectory(fs, current, path->segment);
+    if(next == null) return null;
+
+    if(next->type == FS_INODE_DIRECTORY) return fs_locate(fs, next, path->next);
+    if(next->type == FS_INODE_HARDLINK && !next->hardlink.isSymlink) {
+        if(path->next != null) return null;
+        return next;
+    }
+
+    if(next->type == FS_INODE_HARDLINK && next->hardlink.isSymlink) {
+        INode *file = fs_getINode(fs, next->hardlink.file);
+        uint8_t *buffer = calloc(file->rawfile.size, sizeof(uint8_t));
+        fs_read(fs, file, buffer, file->rawfile.size, 0);
+        FS_Path *spath = fs_pathFromString((FS_StringView){ (char *)buffer, file->rawfile.size });
+        free(buffer);
+
+        fs_appendPath(spath, path->next);
+        path->next = spath;
+
+        return fs_locate(fs, current, spath);
+    }
+
+    return null;
 }
