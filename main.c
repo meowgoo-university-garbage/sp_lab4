@@ -24,6 +24,9 @@ to do this instead of wasting actual blocks for storing this tbh
 int main() {
     char *buffer = malloc(4096 * 16);
     Filesystem fs = fs_initialize(buffer, 4096 * 16, 4096, 16);
+
+    fs_create_hardlink(&fs, FS_ROOT, fs_str("test"), FS_NONE);
+
     printf("Hello\n");
 
     return 0;
