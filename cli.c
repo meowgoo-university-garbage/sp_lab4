@@ -307,6 +307,107 @@ bool fscli_iteration(Filesystem *fs) {
             printf("Wrote %ld instead of %ld bytes\n", amount, line.len);
         }
     }
+    COMMAND("ln") {
+        POP_FILE_NAME(originalName);
+        POP_FILE_NAME(copyName);
+
+        INodeIndex index = fs_locate(fs, null, fscli_strinode(originalName));
+        if(index == FS_NONE) {
+            printf("File not found\n");
+            return true;
+        }
+        INode *inode = fs_getINode(fs, index);
+        if(inode->type != FS_INODE_HARDLINK) {
+            printf("Only hardlinks can be linked\n");
+            return true;
+        }
+
+        INodeIndex copy = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(copyName), inode->hardlink.file);
+        if(copy == FS_NONE) {
+            printf("Failed to link\n");
+            return true;
+        }
+
+        printf("File linked\n");
+    }
+    COMMAND("rm") {
+        POP_FILE_NAME(name);
+
+        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
+        if(index == FS_NONE) {
+            printf("File not found\n");
+            return true;
+        }
+        INode *inode = fs_getINode(fs, index);
+        if(inode->type != FS_INODE_HARDLINK) {
+            printf("Only hardlinks can be removed\n");
+            return true;
+        }
+
+        bool result = fs_remove_hardlink(fs, index);
+        if(result) {
+            printf("Removed file\n");
+        }
+        else {
+            printf("Failed to remove file\n");
+        }
+    }
+    COMMAND("inodes") {
+        for(size_t i = 0; i < fs->header.count_inodes; i++) {
+            INode *inode = &fs->inodes[i];
+
+            if(0) {}
+            else if(inode->type == FS_INODE_UNUSED) {
+                printf("%3d | UNUSED\n", i);
+            }
+            else if(inode->type == FS_INODE_HARDLINK) {
+                printf("%3d | HARDLINK \"%.*s\" to %d\n", i, inode->hardlink.name.len, inode->hardlink.name.str, inode->hardlink.file);
+            }
+            else if(inode->type == FS_INODE_RAWFILE) {
+                printf("%3d | RAWFILE with size %ld\n", i, inode->rawfile.size);
+            }
+            else if(inode->type == FS_INODE_DIRECTORY) {
+                printf("%3d | DIRECTORY \"%.*s\"\n", i, inode->directory.name.len, inode->directory.name.str);
+            }
+        }
+    }
+    COMMAND("truncate") {
+        POP_FILE_NAME(name);
+        POP_INT(len);
+
+        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
+        if(index == FS_NONE) {
+            printf("File not found\n");
+            return true;
+        }
+        INode *inode = fs_getINode(fs, index);
+        if(inode->type != FS_INODE_HARDLINK) {
+            printf("Only files can be truncated\n");
+            return true;
+        }
+
+        fs_truncate(fs, fs_getINode(fs, inode->hardlink.file), len);
+
+        printf("New size: %ld\n", fs_getINode(fs, inode->hardlink.file)->rawfile.size);
+    }
+    COMMAND("blocks") {
+        printf("[ |");
+        for(size_t i = 0; i < fs->header.count_alwaysReservedBlocks; i++) {
+            printf("-");
+        }
+
+        for(size_t i = fs->header.count_alwaysReservedBlocks; i < fs->header.blockCount; i++) {
+            bool b = fs_getBlockAvailability(fs, i);
+            if(b) {
+                printf("#");
+            }
+            else {
+                printf(" ");
+            }
+        }
+
+        printf("| ]\n");
+    }
 #undef COMMAND
 
     return true;
