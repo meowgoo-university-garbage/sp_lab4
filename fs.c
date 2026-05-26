@@ -325,7 +325,12 @@ void fs_checkRawFile(Filesystem *fs, INode *rawfile) {
     }
 
     if(rawfile->rawfile.openedReferences == 0) {
-        // TODO: truncate if unused blocks
+        size_t blockCount = fs_groupCount(rawfile->rawfile.size, fs->header.blockSize);
+        for(size_t i = blockCount; i < FS_INODE_RAWFILE_BLOCKS_LEN; i++) {
+            if(rawfile->rawfile.blocks[i] == FS_NONE) break;
+            fs_releaseBlock(fs, rawfile->rawfile.blocks[i]);
+            rawfile->rawfile.blocks[i] = FS_NONE;
+        }
     }
 }
 
@@ -491,5 +496,6 @@ void fs_truncate(Filesystem *fs, INode *inode, size_t newSize) {
     }
     else {
         inode->rawfile.size = newSize;
+        fs_checkRawFile(fs, inode);
     }
 }
