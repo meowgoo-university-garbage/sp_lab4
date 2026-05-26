@@ -2,7 +2,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include "fs.c"
+#include "cli.c"
 
 /*
 
@@ -23,22 +23,24 @@ to do this instead of wasting actual blocks for storing this tbh
 */
 
 int main() {
-    char *buffer = malloc(4096 * 16);
-    Filesystem fs = fs_initialize(buffer, 4096 * 16, 4096, 16);
+    // char *buffer = malloc(4096 * 16);
+    // Filesystem fs = fs_initialize(buffer, 4096 * 16, 4096, 16);
+    //
+    // INodeIndex hardlink = fs_create_hardlink(&fs, FS_ROOT, fs_str("test"), FS_NONE);
+    // INode *file = fs_getINode(&fs, fs_getINode(&fs, hardlink)->hardlink.file);
+    // bool result = fs_write(&fs, file, "my message", 10, 5);
+    //
+    // char mbuffer[256];
+    // size_t len = fs_read(&fs, file, mbuffer, 10, 0);
+    // mbuffer[len] = '\0';
+    //
+    // // printf("%d %.*s\n", result, len, mbuffer);
+    // write(STDOUT_FILENO, mbuffer, len);
 
-    INodeIndex hardlink = fs_create_hardlink(&fs, FS_ROOT, fs_str("test"), FS_NONE);
-    INode *file = fs_getINode(&fs, fs_getINode(&fs, hardlink)->hardlink.file);
-    bool result = fs_write(&fs, file, "my message", 10, 5);
 
-    char mbuffer[256];
-    size_t len = fs_read(&fs, file, mbuffer, 10, 0);
-    mbuffer[len] = '\0';
+    Filesystem fs = {0};
+    while(fscli_iteration(&fs));
 
-    // printf("%d %.*s\n", result, len, mbuffer);
-    write(STDOUT_FILENO, mbuffer, len);
-
-
-    printf("Hello\n");
 
     return 0;
 }

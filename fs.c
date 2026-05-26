@@ -250,6 +250,14 @@ INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString na
     size_t children = fs_getDirectoryChildren(parent);
     if(children >= FS_INODE_DIRECTORY_CHILDREN_LEN) return FS_NONE;
 
+    for(size_t i = 0; i < children; i++) {
+        INode *child = fs_getINode(fs, parent->directory.children[i]);
+        if(0){}
+        else if(child->type == FS_INODE_DIRECTORY && fs_strcmp(child->directory.name, name)) return FS_NONE;
+        else if(child->type == FS_INODE_HARDLINK && fs_strcmp(child->hardlink.name, name)) return FS_NONE;
+        else continue;
+    }
+
     bool newRawfile = rawfile == FS_NONE;
     if(rawfile == FS_NONE) rawfile = fs_create_rawfile(fs);
     if(rawfile == FS_NONE) return FS_NONE;
