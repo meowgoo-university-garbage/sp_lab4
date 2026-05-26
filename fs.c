@@ -508,7 +508,6 @@ size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_
     for(size_t i = 0; i < blockOffset; i++) {
         if(inode->rawfile.blocks[i] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
-            printf("BLOCK %d\n", new);
             if(new == FS_NONE) return SIZE_MAX;
 
             inode->rawfile.blocks[i] = new;
@@ -520,7 +519,6 @@ size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_
     do {
         if(inode->rawfile.blocks[blockOffset] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
-            printf("BLOCK %d\n", new);
             if(new == FS_NONE) return pos;
 
             inode->rawfile.blocks[blockOffset] = new;
@@ -689,8 +687,6 @@ INode *fs_locate(Filesystem *fs, INode *current, FS_Path *path) {
     }
 
     if(next->type == FS_INODE_HARDLINK && next->hardlink.isSymlink) {
-        printf("LINK\n");
-
         INode *file = fs_getINode(fs, next->hardlink.file);
         uint8_t *buffer = calloc(file->rawfile.size, sizeof(uint8_t));
         fs_read(fs, file, buffer, file->rawfile.size, 0);
