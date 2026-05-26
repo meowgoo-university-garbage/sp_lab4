@@ -493,6 +493,14 @@ bool fscli_iteration(Filesystem *fs) {
         else {
             printf("Failed to remove directory\n");
         }
+
+        cwd = fs_locate(fs, null, fs->cwd);
+        if(cwd == null) {
+            fs_freePath(fs->cwd);
+            fs->cwd = null;
+
+            printf("Removed current directory, changing to /\n");
+        }
     }
     COMMAND("inodes") {
         for(size_t i = 0; i < fs->header.count_inodes; i++) {
