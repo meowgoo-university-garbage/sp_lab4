@@ -69,7 +69,7 @@ size_t fscli_parseInt(FS_StringView sv) {
     size_t acc = 0;
     for(size_t i = 0; i < sv.len; i++) {
         int digit = (int)sv.str[i] - '0';
-        if(digit < 0 || digit > 9) return -1;
+        if(digit < 0 || digit > 9) return SIZE_MAX;
 
         acc = acc * 10 + digit;
     }
@@ -123,7 +123,7 @@ bool fscli_iteration(Filesystem *fs) {
     } \
  \
     size_t i = fscli_parseInt(is); \
-    if(i == -1) { \
+    if(i == SIZE_MAX) { \
         printf("Provide an integer\n"); \
         return true; \
     }
@@ -265,17 +265,24 @@ bool fscli_iteration(Filesystem *fs) {
         POP_INT(len);
 
         size_t offset = fs_pos(fs, fd);
-        if(offset == -1) {
+        if(offset == SIZE_MAX) {
             printf("Failed to read\n");
+            return true;
         }
 
         INode *inode = fs_fdinode(fs, fd);
         if(inode == null) {
             printf("Failed to read\n");
+            return true;
         }
 
         uint8_t *buffer = calloc(len, sizeof(uint8_t));
         size_t amount = fs_read(fs, inode, buffer, len, offset);
+        if(amount == SIZE_MAX) {
+            printf("Failed to read\n");
+            return true;
+        }
+
         fs_seek(fs, fd, offset + amount);
 
         if(amount != len) {
@@ -291,16 +298,23 @@ bool fscli_iteration(Filesystem *fs) {
         POP_FD(fd);
 
         size_t offset = fs_pos(fs, fd);
-        if(offset == -1) {
+        if(offset == SIZE_MAX) {
             printf("Failed to write\n");
+            return true;
         }
 
         INode *inode = fs_fdinode(fs, fd);
         if(inode == null) {
             printf("Failed to write\n");
+            return true;
         }
 
-        size_t amount = fs_write(fs, inode, line.str, line.len, offset);
+        size_t amount = fs_write(fs, inode, (uint8_t *)line.str, line.len, offset);
+        if(amount == SIZE_MAX) {
+            printf("Failed to write\n");
+            return true;
+        }
+
         fs_seek(fs, fd, offset + amount);
 
         if(amount != line.len) {
@@ -358,16 +372,16 @@ bool fscli_iteration(Filesystem *fs) {
 
             if(0) {}
             else if(inode->type == FS_INODE_UNUSED) {
-                printf("%3d | UNUSED\n", i);
+                printf("%3ld | UNUSED\n", i);
             }
             else if(inode->type == FS_INODE_HARDLINK) {
-                printf("%3d | HARDLINK \"%.*s\" to %d\n", i, inode->hardlink.name.len, inode->hardlink.name.str, inode->hardlink.file);
+                printf("%3ld | HARDLINK \"%.*s\" to %d\n", i, inode->hardlink.name.len, inode->hardlink.name.str, inode->hardlink.file);
             }
             else if(inode->type == FS_INODE_RAWFILE) {
-                printf("%3d | RAWFILE with size %ld\n", i, inode->rawfile.size);
+                printf("%3ld | RAWFILE with size %ld\n", i, inode->rawfile.size);
             }
             else if(inode->type == FS_INODE_DIRECTORY) {
-                printf("%3d | DIRECTORY \"%.*s\"\n", i, inode->directory.name.len, inode->directory.name.str);
+                printf("%3ld | DIRECTORY \"%.*s\"\n", i, inode->directory.name.len, inode->directory.name.str);
             }
         }
     }

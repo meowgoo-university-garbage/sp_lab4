@@ -261,6 +261,18 @@ INodeIndex fs_create_rawfile(Filesystem *fs) {
     return rawfile;
 }
 
+bool fs_remove_rawfile(Filesystem *fs, INode *rawfile) {
+    if(rawfile->type != FS_INODE_RAWFILE) return false;
+
+    for(size_t i = 0; i < FS_INODE_RAWFILE_BLOCKS_LEN; i++) {
+        if(rawfile->rawfile.blocks[i] == FS_NONE) break;
+        fs_releaseBlock(fs, rawfile->rawfile.blocks[i]);
+    }
+
+    rawfile->type = FS_INODE_UNUSED;
+    return true;
+}
+
 INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString name, INodeIndex rawfile) {
     if(parenti == 0) parenti = FS_ROOT;
 
@@ -284,8 +296,10 @@ INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString na
 
     INodeIndex hardlink = fs_getUnusedINode(fs);
     if(hardlink == FS_NONE) {
-        // TODO: delete rawfile if created
-        newRawfile = newRawfile;
+        if(newRawfile) {
+            fs_remove_rawfile(fs, fs_getINode(fs, rawfile));
+        }
+
         return FS_NONE;
     }
 
@@ -302,18 +316,6 @@ INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString na
     parent->directory.children[children] = hardlink;
 
     return hardlink;
-}
-
-bool fs_remove_rawfile(Filesystem *fs, INode *rawfile) {
-    if(rawfile->type != FS_INODE_RAWFILE) return false;
-
-    for(size_t i = 0; i < FS_INODE_RAWFILE_BLOCKS_LEN; i++) {
-        if(rawfile->rawfile.blocks[i] == FS_NONE) break;
-        fs_releaseBlock(fs, rawfile->rawfile.blocks[i]);
-    }
-
-    rawfile->type = FS_INODE_UNUSED;
-    return true;
 }
 
 void fs_checkRawFile(Filesystem *fs, INode *rawfile) {
@@ -358,16 +360,16 @@ bool fs_remove_hardlink(Filesystem *fs, INodeIndex hardlinki) {
 
 
 size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
-    if(inode->type != FS_INODE_RAWFILE) return -1;
+    if(inode->type != FS_INODE_RAWFILE) return SIZE_MAX;
 
     size_t blockOffset = offset / fs->header.blockSize;
     size_t firstBlockOffset = offset % fs->header.blockSize;
-    if(blockOffset >= FS_INODE_RAWFILE_BLOCKS_LEN) return -1;
+    if(blockOffset >= FS_INODE_RAWFILE_BLOCKS_LEN) return SIZE_MAX;
 
     for(size_t i = 0; i < blockOffset; i++) {
         if(inode->rawfile.blocks[i] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
-            if(new == FS_NONE) return -1;
+            if(new == FS_NONE) return SIZE_MAX;
 
             inode->rawfile.blocks[i] = new;
         }
@@ -400,7 +402,7 @@ size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_
 }
 
 size_t fs_read(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
-    if(inode->type != FS_INODE_RAWFILE) return -1;
+    if(inode->type != FS_INODE_RAWFILE) return SIZE_MAX;
 
     if(offset >= inode->rawfile.size) return 0;
 
@@ -475,7 +477,7 @@ bool fs_seek(Filesystem *fs, FS_Descriptor fd, size_t pos) {
 
 size_t fs_pos(Filesystem *fs, FS_Descriptor fd) {
     FS_DescriptorInfo *di = &fs->descriptors[fd - 1];
-    if(di->index == FS_NONE) return -1;
+    if(di->index == FS_NONE) return SIZE_MAX;
     return di->position;
 }
 
@@ -491,7 +493,7 @@ void fs_truncate(Filesystem *fs, INode *inode, size_t newSize) {
     if(newSize == inode->rawfile.size) return;
 
     if(newSize > inode->rawfile.size) {
-        char temp = 0;
+        uint8_t temp = 0;
         fs_write(fs, inode, &temp, 0, newSize);
     }
     else {
