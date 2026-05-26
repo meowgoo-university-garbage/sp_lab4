@@ -45,7 +45,7 @@ typedef struct {
     INode *inodes;
 
     // TODO: ideally should be unlimited but im lazy
-#define FS_DESCRIPTORS 16
+#define FS_DESCRIPTORS 10
     FS_DescriptorInfo descriptors[FS_DESCRIPTORS];
 } Filesystem;
 
@@ -176,32 +176,30 @@ INode *fs_root(Filesystem *fs) {
     return fs_getINode(fs, FS_ROOT);
 }
 
-INode *fs_locate(Filesystem *fs, INode *parent, INodeString path) {
+INodeIndex fs_locate(Filesystem *fs, INode *parent, INodeString path) {
     // TODO: for now we define path to be the name of a file in root directory 
 
     if(parent == null) parent = fs_root(fs);
 
     for(int i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
         INodeIndex index = parent->directory.children[i];
-        if(index == 0) return null;
+        if(index == 0) return FS_NONE;
 
         INode *child = &fs->inodes[index];
         
         if(0){}
         else if(child->type == FS_INODE_HARDLINK) {
-            if(fs_strcmp(path, child->hardlink.name)) return child;
+            if(fs_strcmp(path, child->hardlink.name)) return index;
         }
         else if(child->type == FS_INODE_DIRECTORY) {
-            if(fs_strcmp(path, child->directory.name)) return child;
+            if(fs_strcmp(path, child->directory.name)) return index;
         }
         else {
             continue;
         }
-        
-        return child;
     }
 
-    return null;
+    return FS_NONE;
 }
 
 size_t fs_getDirectoryChildren(INode *dir) {
@@ -308,17 +306,17 @@ void fs_releaseBlock(Filesystem *fs, FS_Block block) {
 
 
 
-bool fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
-    if(inode->type != FS_INODE_RAWFILE) return false;
+size_t fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
+    if(inode->type != FS_INODE_RAWFILE) return -1;
 
     size_t blockOffset = offset / fs->header.blockSize;
     size_t firstBlockOffset = offset % fs->header.blockSize;
-    if(blockOffset >= FS_INODE_RAWFILE_BLOCKS_LEN) return false;
+    if(blockOffset >= FS_INODE_RAWFILE_BLOCKS_LEN) return -1;
 
     for(size_t i = 0; i < blockOffset; i++) {
         if(inode->rawfile.blocks[i] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
-            if(new == FS_NONE) return false;
+            if(new == FS_NONE) return -1;
 
             inode->rawfile.blocks[i] = new;
         }
@@ -329,7 +327,7 @@ bool fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t 
     do {
         if(inode->rawfile.blocks[blockOffset] == FS_NONE) {
             FS_Block new = fs_acquireBlock(fs);
-            if(new == FS_NONE) return false;
+            if(new == FS_NONE) return pos;
 
             inode->rawfile.blocks[blockOffset] = new;
         }
@@ -347,7 +345,7 @@ bool fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t 
         blockOffset += 1;
     } while(len > 0 && blockOffset < FS_INODE_RAWFILE_BLOCKS_LEN);
 
-    return true;
+    return pos;
 }
 
 size_t fs_read(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
@@ -384,7 +382,7 @@ size_t fs_read(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t
 
 FS_Descriptor fs_open(Filesystem *fs, INodeIndex index) {
     INode *inode = fs_getINode(fs, index);
-    if(inode->type == FS_INODE_UNUSED) return FS_NONE;
+    if(inode->type != FS_INODE_RAWFILE) return FS_NONE;
 
     size_t i;
     for(i = 0; i < FS_DESCRIPTORS; i++) {
@@ -401,4 +399,35 @@ FS_Descriptor fs_open(Filesystem *fs, INodeIndex index) {
     inode->rawfile.openedReferences += 1;
 
     return (i + 1);
+}
+
+bool fs_close(Filesystem *fs, FS_Descriptor fd) {
+    FS_DescriptorInfo di = fs->descriptors[fd - 1];
+    if(di.index == FS_NONE) return false;
+
+    INode *inode = fs_getINode(fs, di.inode);
+    inode->rawfile.openedReferences -= 1;
+    fs->descriptors[fd - 1].index = FS_NONE;
+
+    return true;
+}
+
+bool fs_seek(Filesystem *fs, FS_Descriptor fd, size_t pos) {
+    FS_DescriptorInfo *di = &fs->descriptors[fd - 1];
+    if(di->index == FS_NONE) return false;
+
+    di->position = pos;
+    return true;
+}
+
+size_t fs_pos(Filesystem *fs, FS_Descriptor fd) {
+    FS_DescriptorInfo *di = &fs->descriptors[fd - 1];
+    if(di->index == FS_NONE) return -1;
+    return di->position;
+}
+
+INode *fs_fdinode(Filesystem *fs, FS_Descriptor fd) {
+    FS_DescriptorInfo *di = &fs->descriptors[fd - 1];
+    if(di->index == FS_NONE) return null;
+    return fs_getINode(fs, di->inode);
 }

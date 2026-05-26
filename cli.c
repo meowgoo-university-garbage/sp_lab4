@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 
 #include "fs.c"
 
@@ -64,6 +65,18 @@ FS_StringView fscli_getline() {
     return sv;
 }
 
+size_t fscli_parseInt(FS_StringView sv) {
+    size_t acc = 0;
+    for(size_t i = 0; i < sv.len; i++) {
+        int digit = (int)sv.str[i] - '0';
+        if(digit < 0 || digit > 9) return -1;
+
+        acc = acc * 10 + digit;
+    }
+    
+    return acc;
+}
+
 bool fscli_iteration(Filesystem *fs) {
     printf("> ");
     fflush(stdout);
@@ -76,6 +89,45 @@ bool fscli_iteration(Filesystem *fs) {
         return true;
     }
 #define COMMAND(x) else if(fscli_strcmp(command, fscli_str(x)))
+
+#define POP_FILE_NAME(name)  \
+    FS_StringView name = fscli_popWord(&line); \
+    if(name.len == 0) { \
+        printf("No name provided\n"); \
+        return true; \
+    } \
+ \
+    if(name.len > FS_MAX_PATH_SEGMENT) { \
+        printf("Max file name: %d\n", FS_MAX_PATH_SEGMENT); \
+        return true; \
+    }
+
+#define POP_FD(fd) \
+    FS_StringView fds = fscli_popWord(&line); \
+    if(fds.len != 1) { \
+        printf("Provide a file descriptor 0 - 9\n"); \
+        return true; \
+    } \
+ \
+    FS_Descriptor fd = fds.str[0] - '0' + 1; \
+    if(fd < 1 || fd > 10) { \
+        printf("Provide a file descriptor 0 - 9\n"); \
+        return true; \
+    }
+
+#define POP_INT(i) \
+    FS_StringView is = fscli_popWord(&line); \
+    if(is.len == 0) { \
+        printf("Provide an integer\n"); \
+        return true; \
+    } \
+ \
+    size_t i = fscli_parseInt(is); \
+    if(i == -1) { \
+        printf("Provide an integer\n"); \
+        return true; \
+    }
+
     COMMAND("quit") {
         printf("Quitting\n");
         return false;
@@ -103,16 +155,7 @@ bool fscli_iteration(Filesystem *fs) {
         return true;
     }
     COMMAND("touch") {
-        FS_StringView name = fscli_popWord(&line);
-        if(name.len == 0) {
-            printf("No name provided\n");
-            return true;
-        }
-
-        if(name.len > FS_MAX_PATH_SEGMENT) {
-            printf("Max file name: %d\n", FS_MAX_PATH_SEGMENT);
-            return true;
-        }
+        POP_FILE_NAME(name);
 
         INodeIndex hardlink = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(name), FS_NONE);
         if(hardlink == FS_NONE) {
@@ -120,6 +163,30 @@ bool fscli_iteration(Filesystem *fs) {
         }
         else {
             printf("File created\n");
+        }
+    }
+    COMMAND("stat") {
+        POP_FILE_NAME(name);
+
+        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
+        if(index == FS_NONE) {
+            printf("File not found\n");
+            return true;
+        }
+
+        INode *inode = fs_getINode(fs, index);
+
+        if(0) {}
+        else if(inode->type == FS_INODE_HARDLINK) {
+            INode *file = fs_getINode(fs, inode->hardlink.file);
+
+            printf("Name: \"%.*s\"\n", inode->hardlink.name.len, inode->hardlink.name.str);
+            printf("Size: %ld\n", file->rawfile.size);
+            printf("Hardlink INode: %d\n", index);
+            printf("Rawfile  INode: %d\n", inode->hardlink.file);
+        }
+        else {
+            printf("idk\n");
         }
     }
     COMMAND("ls") {
@@ -146,6 +213,98 @@ bool fscli_iteration(Filesystem *fs) {
 
         if(!printedAny) {
             printf("Current directory is empty\n");
+        }
+    }
+    COMMAND("open") {
+        POP_FILE_NAME(name);
+
+        INodeIndex index = fs_locate(fs, null, fscli_strinode(name));
+        if(index == FS_NONE) {
+            printf("File not found\n");
+            return true;
+        }
+        INode *inode = fs_getINode(fs, index);
+        if(inode->type != FS_INODE_HARDLINK) {
+            printf("Only hardlinks can be opened\n");
+            return true;
+        }
+
+        FS_Descriptor fd = fs_open(fs, inode->hardlink.file);
+        if(fd == 0) {
+            printf("Couldn't open the file\n");
+            return true;
+        }
+
+        printf("File is bound to file descriptor %d\n", fd - 1);
+    }
+    COMMAND("close") {
+        POP_FD(fd);
+
+        bool result = fs_close(fs, fd);
+        if(result) {
+            printf("File descriptor closed\n");
+        }
+        else {
+            printf("Couldn't close file descriptor\n");
+        }
+    }
+    COMMAND("seek") {
+        POP_FD(fd);
+        POP_INT(pos);
+
+        bool result = fs_seek(fs, fd, pos);
+        if(result) {
+            printf("Moved to specified position\n");
+        }
+        else {
+            printf("Failed to seek\n");
+        }
+    }
+    COMMAND("read") {
+        POP_FD(fd);
+        POP_INT(len);
+
+        size_t offset = fs_pos(fs, fd);
+        if(offset == -1) {
+            printf("Failed to read\n");
+        }
+
+        INode *inode = fs_fdinode(fs, fd);
+        if(inode == null) {
+            printf("Failed to read\n");
+        }
+
+        uint8_t *buffer = calloc(len, sizeof(uint8_t));
+        size_t amount = fs_read(fs, inode, buffer, len, offset);
+        fs_seek(fs, fd, offset + amount);
+
+        if(amount != len) {
+            printf("Read %ld instead of %ld bytes\n", amount, len);
+        }
+
+        printf("Read data: \"");
+        fflush(stdout);
+        write(STDOUT_FILENO, buffer, amount);
+        printf("\"\n");
+    }
+    COMMAND("write") {
+        POP_FD(fd);
+
+        size_t offset = fs_pos(fs, fd);
+        if(offset == -1) {
+            printf("Failed to write\n");
+        }
+
+        INode *inode = fs_fdinode(fs, fd);
+        if(inode == null) {
+            printf("Failed to write\n");
+        }
+
+        size_t amount = fs_write(fs, inode, line.str, line.len, offset);
+        fs_seek(fs, fd, offset + amount);
+
+        if(amount != line.len) {
+            printf("Wrote %ld instead of %ld bytes\n", amount, line.len);
         }
     }
 #undef COMMAND
