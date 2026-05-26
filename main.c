@@ -1,6 +1,7 @@
 #include <stdio.h>
+#include <stdlib.h>
 
-#include "inode.c"
+#include "fs.c"
 
 /*
 
@@ -21,9 +22,9 @@ to do this instead of wasting actual blocks for storing this tbh
 */
 
 int main() {
-    INode test;
+    char *buffer = malloc(4096 * 16);
+    Filesystem fs = fs_initialize(buffer, 4096 * 16, 4096, 16);
+    printf("Hello\n");
 
-    printf("Hello, World! %d\n", sizeof(test.directory.children));
-    printf("Hello, World! %d\n", sizeof(INodeString));
     return 0;
 }

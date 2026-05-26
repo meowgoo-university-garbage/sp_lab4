@@ -16,7 +16,7 @@ typedef struct {
     uint8_t len;
 } INodeString;
 
-// TODO: for now 30 will be the limit for children/blocks, I'll expand on that
+// TODO: for now some constant will be the limit for children/blocks, I'll probably expand on that
 // in lab5 for content
 
 typedef struct {
@@ -25,22 +25,26 @@ typedef struct {
     union {
         struct {
             INodeString name;
+            INodeIndex  parent;
 
             // children data
-#define FS_INODE_DIRECTORY_CHILDREN_LEN 30
-            INodeIndex children[FS_INODE_DIRECTORY_CHILDREN_LEN];
+#define FS_INODE_DIRECTORY_CHILDREN_LEN 26
+            INodeIndex  children[FS_INODE_DIRECTORY_CHILDREN_LEN];
             // INodeIndex continuation;
         } directory;
         struct {
             INodeString name;
+            INodeIndex  parent;
             INodeIndex  file;
         } hardlink;
         struct {
             uint8_t hardlinkReferences;
             uint8_t openedReferences;
 
+            size_t size;
+
             // block data
-#define FS_INODE_RAWFILE_BLOCKS_LEN 30
+#define FS_INODE_RAWFILE_BLOCKS_LEN 26
             uint32_t blocks[FS_INODE_RAWFILE_BLOCKS_LEN];
             // INodeIndex continuation;
         } rawfile;
