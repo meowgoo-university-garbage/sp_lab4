@@ -7,6 +7,8 @@
 #include "inode.c"
 
 #define FS_IS_POWER_OF_TWO(x) (__builtin_popcount(x) == 1)
+#define FS_MIN(a, b) ((a) < (b) ? (a) : (b))
+#define FS_MAX(a, b) ((a) > (b) ? (a) : (b))
 
 typedef struct {
     size_t len;
@@ -26,14 +28,14 @@ typedef struct {
 } FS_Header;
 
 typedef uint8_t FS_BlockAvailability;
-typedef uint8_t *FS_Block;
 
 typedef struct {
     int index;
     INodeIndex inode;
 
     size_t position;
-} FS_Descriptor;
+} FS_DescriptorInfo;
+typedef int FS_Descriptor;
 
 typedef struct {
     char *data;
@@ -42,7 +44,9 @@ typedef struct {
     FS_BlockAvailability *blockAvailability;
     INode *inodes;
 
-    // TODO: opened files
+    // TODO: ideally should be unlimited but im lazy
+#define FS_DESCRIPTORS 16
+    FS_DescriptorInfo descriptors[FS_DESCRIPTORS];
 } Filesystem;
 
 
@@ -65,6 +69,7 @@ Filesystem fs_load(char *data, size_t len) {
         .header = *header,
         .blockAvailability = (FS_BlockAvailability *)((char *)header + header->offset_blockAvailability),
         .inodes = (INode *)((char *)header + header->offset_inodes),
+        .descriptors = {{0}},
     };
 
     return fs;
@@ -107,6 +112,14 @@ void fs_initialize_inodes(FS_Header *header) {
     return;
 }
 
+bool fs_getBlockAvailability(Filesystem *fs, size_t index) {
+    uint8_t bitIndex = index % 8;
+    size_t byteIndex = index / 8;
+    uint8_t mask = (1 << bitIndex);
+
+    return (fs->blockAvailability[byteIndex] & mask) != 0;
+}
+
 void fs_setBlockAvailability(Filesystem *fs, size_t index, bool value) {
     uint8_t bitIndex = index % 8;
     size_t byteIndex = index / 8;
@@ -144,6 +157,7 @@ Filesystem fs_initialize(char *data, size_t len, size_t blockSize, size_t inodeC
         .header = *header,
         .blockAvailability = (FS_BlockAvailability *)((char *)header + header->offset_blockAvailability),
         .inodes = (INode *)((char *)header + header->offset_inodes),
+        .descriptors = {{0}},
     };
 
     for(size_t i = 0; i < header->count_alwaysReservedBlocks; i++) {
@@ -260,4 +274,123 @@ INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString na
     parent->directory.children[children] = hardlink;
 
     return hardlink;
+}
+
+char *fs_getBlockPointer(Filesystem *fs, FS_Block block) {
+    return fs->data + (block * fs->header.blockSize);
+}
+
+FS_Block fs_acquireBlock(Filesystem *fs) {
+    for(size_t i = fs->header.count_alwaysReservedBlocks; i < fs->header.blockCount; i++) {
+        if(!fs_getBlockAvailability(fs, i)) {
+            fs_setBlockAvailability(fs, i, true);
+
+            memset(fs_getBlockPointer(fs, i), 0x00, fs->header.blockSize);
+
+            return i;
+        }
+    }
+
+    return FS_NONE;
+}
+
+void fs_releaseBlock(Filesystem *fs, FS_Block block) {
+    fs_setBlockAvailability(fs, block, false);
+}
+
+
+
+bool fs_write(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
+    if(inode->type != FS_INODE_RAWFILE) return false;
+
+    size_t blockOffset = offset / fs->header.blockSize;
+    size_t firstBlockOffset = offset % fs->header.blockSize;
+    if(blockOffset >= FS_INODE_RAWFILE_BLOCKS_LEN) return false;
+
+    for(size_t i = 0; i < blockOffset; i++) {
+        if(inode->rawfile.blocks[i] == FS_NONE) {
+            FS_Block new = fs_acquireBlock(fs);
+            if(new == FS_NONE) return false;
+
+            inode->rawfile.blocks[i] = new;
+        }
+    }
+
+    size_t pos = 0;
+
+    do {
+        if(inode->rawfile.blocks[blockOffset] == FS_NONE) {
+            FS_Block new = fs_acquireBlock(fs);
+            if(new == FS_NONE) return false;
+
+            inode->rawfile.blocks[blockOffset] = new;
+        }
+
+        size_t chunkLength = FS_MIN(fs->header.blockSize - firstBlockOffset, len);
+        memcpy(fs_getBlockPointer(fs, blockOffset) + firstBlockOffset, buffer + pos, chunkLength);
+        firstBlockOffset = 0;
+
+        pos += chunkLength;
+        len -= chunkLength;
+        offset += chunkLength;
+
+        inode->rawfile.size = FS_MAX(inode->rawfile.size, offset);
+
+        blockOffset += 1;
+    } while(len > 0 && blockOffset < FS_INODE_RAWFILE_BLOCKS_LEN);
+
+    return true;
+}
+
+size_t fs_read(Filesystem *fs, INode *inode, uint8_t *buffer, size_t len, size_t offset) {
+    if(inode->type != FS_INODE_RAWFILE) return -1;
+
+    if(offset >= inode->rawfile.size) return 0;
+
+    size_t blockOffset = offset / fs->header.blockSize;
+    size_t firstBlockOffset = offset % fs->header.blockSize;
+
+    // NOTE: never happens due to check above
+    // if(blockOffset >= FS_INODE_RAWFILE_BLOCKS_LEN) return false;
+
+    size_t pos = 0;
+    do {
+        if(inode->rawfile.blocks[blockOffset] == FS_NONE) break;
+
+        size_t chunkLength = FS_MIN(fs->header.blockSize - firstBlockOffset, len);
+        memcpy(buffer + pos, fs_getBlockPointer(fs, blockOffset) + firstBlockOffset, chunkLength);
+        firstBlockOffset = 0;
+
+        pos += chunkLength;
+        len -= chunkLength;
+        offset += chunkLength;
+
+        blockOffset += 1;
+    } while(len > 0 && blockOffset < FS_INODE_RAWFILE_BLOCKS_LEN);
+
+    return pos;
+}
+
+
+
+
+FS_Descriptor fs_open(Filesystem *fs, INodeIndex index) {
+    INode *inode = fs_getINode(fs, index);
+    if(inode->type == FS_INODE_UNUSED) return FS_NONE;
+
+    size_t i;
+    for(i = 0; i < FS_DESCRIPTORS; i++) {
+        if(fs->descriptors[i].index == FS_NONE) break;
+    }
+
+    if(i == FS_DESCRIPTORS) return FS_NONE;
+
+    fs->descriptors[i] = (FS_DescriptorInfo){
+        .index = (i + 1),
+        .inode = index,
+        .position = 0,
+    };
+    inode->rawfile.openedReferences += 1;
+
+    return (i + 1);
 }

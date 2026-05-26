@@ -8,6 +8,8 @@ typedef uint8_t INodeType;
 #define FS_INODE_RAWFILE 3
 
 
+typedef uint32_t FS_Block;
+
 typedef uint16_t INodeIndex;
 // NOTE: index reuse because it is always clear which one is implied
 #define FS_ROOT 0
@@ -50,7 +52,7 @@ typedef struct {
 
             // block data
 #define FS_INODE_RAWFILE_BLOCKS_LEN 26
-            uint32_t blocks[FS_INODE_RAWFILE_BLOCKS_LEN];
+            FS_Block blocks[FS_INODE_RAWFILE_BLOCKS_LEN];
             // INodeIndex continuation;
         } rawfile;
     };
