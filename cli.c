@@ -146,6 +146,16 @@ bool fscli_iteration(Filesystem *fs) {
             printf("File created\n");
         }
     }
+    COMMAND("mkdir") {
+        POP_FILE_NAME(name);
+        INodeIndex directory = fs_create_directory(fs, FS_ROOT, fscli_strinode(name));
+        if(directory == FS_NONE) {
+            printf("Couldn't create the directory\n");
+        }
+        else {
+            printf("Directory created\n");
+        }
+    }
     COMMAND("stat") {
         POP_FILE_NAME(name);
 

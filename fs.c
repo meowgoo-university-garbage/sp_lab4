@@ -378,6 +378,40 @@ INodeIndex fs_create_hardlink(Filesystem *fs, INodeIndex parenti, INodeString na
     return hardlink;
 }
 
+INodeIndex fs_create_directory(Filesystem *fs, INodeIndex parenti, INodeString name) {
+    if(parenti == 0) parenti = FS_ROOT;
+
+    INode *parent = fs_getINode(fs, parenti);
+    if(parent->type != FS_INODE_DIRECTORY) return FS_NONE;
+
+    size_t children = fs_getDirectoryChildren(parent);
+    if(children >= FS_INODE_DIRECTORY_CHILDREN_LEN) return FS_NONE;
+
+    for(size_t i = 0; i < children; i++) {
+        INode *child = fs_getINode(fs, parent->directory.children[i]);
+        if(0){}
+        else if(child->type == FS_INODE_DIRECTORY && fs_strcmp(child->directory.name, name)) return FS_NONE;
+        else if(child->type == FS_INODE_HARDLINK && fs_strcmp(child->hardlink.name, name)) return FS_NONE;
+        else continue;
+    }
+
+    INodeIndex directory = fs_getUnusedINode(fs);
+    if(directory == FS_NONE) return FS_NONE;
+
+    *fs_getINode(fs, directory) = (INode){
+        .type = FS_INODE_DIRECTORY,
+        .directory = {
+            .name = name,
+            .parent = parenti,
+            .children = {0},
+        },
+    };
+
+    parent->directory.children[children] = directory;
+
+    return directory;
+}
+
 void fs_checkRawFile(Filesystem *fs, INode *rawfile) {
     if(rawfile->type != FS_INODE_RAWFILE) return;
 
