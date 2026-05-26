@@ -58,6 +58,35 @@ size_t fscli_parseInt(FS_StringView sv) {
     return acc;
 }
 
+void fscli_tree(Filesystem *fs, INode *dir, int indent) {
+    for(size_t i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
+        if(dir->directory.children[i] == FS_NONE) break;
+        INode *child = fs_getINode(fs, dir->directory.children[i]);
+
+        if(0) {}
+        else if(child->type == FS_INODE_DIRECTORY) {
+            for(int i = 0; i < indent; i++) {
+                printf(" ");
+            }
+            printf("/%.*s/\n", child->directory.name.len, child->directory.name.str);
+
+            fscli_tree(fs, child, indent + 4);
+        }
+        else if(child->type == FS_INODE_HARDLINK) {
+            for(int i = 0; i < indent; i++) {
+                printf(" ");
+            }
+            printf("/%.*s\n", child->hardlink.name.len, child->hardlink.name.str);
+        }
+        else {
+            for(int i = 0; i < indent; i++) {
+                printf(" ");
+            }
+            printf("idk\n");
+        }
+    }
+}
+
 bool fscli_iteration(Filesystem *fs) {
     printf("> ");
     fflush(stdout);
@@ -138,7 +167,9 @@ bool fscli_iteration(Filesystem *fs) {
     COMMAND("touch") {
         POP_FILE_NAME(name);
 
-        INodeIndex hardlink = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(name), FS_NONE, false);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+
+        INodeIndex hardlink = fs_create_hardlink(fs, fs_indexFromINode(fs, cwd), fscli_strinode(name), FS_NONE, false);
         if(hardlink == FS_NONE) {
             printf("Couldn't create the file\n");
         }
@@ -148,7 +179,10 @@ bool fscli_iteration(Filesystem *fs) {
     }
     COMMAND("mkdir") {
         POP_FILE_NAME(name);
-        INodeIndex directory = fs_create_directory(fs, FS_ROOT, fscli_strinode(name));
+
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+
+        INodeIndex directory = fs_create_directory(fs, fs_indexFromINode(fs, cwd), fscli_strinode(name));
         if(directory == FS_NONE) {
             printf("Couldn't create the directory\n");
         }
@@ -156,11 +190,29 @@ bool fscli_iteration(Filesystem *fs) {
             printf("Directory created\n");
         }
     }
+    COMMAND("cd") {
+        POP_FILE_NAME(spath);
+        FS_Path *path = fs_pathFromString(spath);
+
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *newcwd = fs_locate(fs, cwd, path);
+        fs_freePath(path);
+
+        if(newcwd == null) {
+            printf("Couldn't find the directory\n");
+            return true;
+        }
+
+        fs_freePath(fs->cwd);
+
+        fs->cwd = fs_pathFromINode(fs, newcwd, null);
+    }
     COMMAND("stat") {
         POP_FILE_NAME(name);
 
         FS_Path *path = fs_pathFromString(name);
-        INode *inode = fs_locate(fs, null, path);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locate(fs, cwd, path);
         fs_freePath(path);
 
         if(inode == null) {
@@ -182,7 +234,7 @@ bool fscli_iteration(Filesystem *fs) {
         }
     }
     COMMAND("ls") {
-        INode *dir = fs_getINode(fs, FS_ROOT);
+        INode *dir = fs_locate(fs, null, fs->cwd);
 
         bool printedAny = false;
         for(size_t i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
@@ -207,11 +259,17 @@ bool fscli_iteration(Filesystem *fs) {
             printf("Current directory is empty\n");
         }
     }
+    COMMAND("tree") {
+        INode *dir = fs_locate(fs, null, fs->cwd);
+        printf("%.*s/\n", dir->directory.name.len, dir->directory.name.str);
+        fscli_tree(fs, dir, 4);
+    }
     COMMAND("open") {
         POP_FILE_NAME(name);
 
         FS_Path *path = fs_pathFromString(name);
-        INode *inode = fs_locate(fs, null, path);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locate(fs, cwd, path);
         fs_freePath(path);
 
         if(inode == null) {
@@ -321,7 +379,8 @@ bool fscli_iteration(Filesystem *fs) {
         POP_FILE_NAME(copyName);
 
         FS_Path *path = fs_pathFromString(originalName);
-        INode *inode = fs_locate(fs, null, path);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locate(fs, cwd, path);
         fs_freePath(path);
 
         if(inode == null) {
@@ -334,7 +393,7 @@ bool fscli_iteration(Filesystem *fs) {
             return true;
         }
 
-        INodeIndex copy = fs_create_hardlink(fs, FS_ROOT, fscli_strinode(copyName), inode->hardlink.file, false);
+        INodeIndex copy = fs_create_hardlink(fs, fs_indexFromINode(fs, cwd), fscli_strinode(copyName), inode->hardlink.file, false);
         if(copy == FS_NONE) {
             printf("Failed to link\n");
             return true;
@@ -346,7 +405,8 @@ bool fscli_iteration(Filesystem *fs) {
         POP_FILE_NAME(name);
 
         FS_Path *path = fs_pathFromString(name);
-        INode *inode = fs_locate(fs, null, path);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locate(fs, cwd, path);
         fs_freePath(path);
 
         if(inode == null) {
@@ -365,6 +425,32 @@ bool fscli_iteration(Filesystem *fs) {
         }
         else {
             printf("Failed to remove file\n");
+        }
+    }
+    COMMAND("rmdir") {
+        POP_FILE_NAME(name);
+
+        FS_Path *path = fs_pathFromString(name);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locate(fs, cwd, path);
+        fs_freePath(path);
+
+        if(inode == null) {
+            printf("Directory not found\n");
+            return true;
+        }
+
+        if(inode->type != FS_INODE_DIRECTORY) {
+            printf("Only directories can be removed\n");
+            return true;
+        }
+
+        bool result = fs_remove_directory(fs, inode);
+        if(result) {
+            printf("Removed directory\n");
+        }
+        else {
+            printf("Failed to remove directory\n");
         }
     }
     COMMAND("inodes") {
@@ -391,7 +477,8 @@ bool fscli_iteration(Filesystem *fs) {
         POP_INT(len);
 
         FS_Path *path = fs_pathFromString(name);
-        INode *inode = fs_locate(fs, null, path);
+        INode *cwd = fs_locate(fs, null, fs->cwd);
+        INode *inode = fs_locate(fs, cwd, path);
         fs_freePath(path);
 
         if(inode == null) {

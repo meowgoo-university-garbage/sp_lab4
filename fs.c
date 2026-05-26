@@ -151,6 +151,10 @@ size_t fs_groupCount(size_t amount, size_t groupSize) {
     return n;
 }
 
+INodeIndex fs_indexFromINode(Filesystem *fs, INode *inode) {
+    return inode - (fs->inodes);
+}
+
 // Loads a file system from a previously initialized buffer
 Filesystem fs_load(char *data, size_t len) {
     assert(len >= sizeof(FS_Header));
@@ -446,6 +450,39 @@ bool fs_remove_hardlink(Filesystem *fs, INode *hardlink) {
     INode *file = fs_getINode(fs, hardlink->hardlink.file);
     file->rawfile.hardlinkReferences -= 1;
     fs_checkRawFile(fs, file);
+
+    return found;
+}
+
+bool fs_remove_directory(Filesystem *fs, INode *directory) {
+    if(directory->type != FS_INODE_DIRECTORY) return false;
+
+    for(size_t i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
+        if(directory->directory.children[i] == FS_NONE) break;
+
+        INode *inode = fs_getINode(fs, directory->directory.children[i]);
+        if(0) {}
+        else if(inode->type == FS_INODE_DIRECTORY) {
+            fs_remove_directory(fs, inode);
+        }
+        else if(inode->type == FS_INODE_HARDLINK) {
+            fs_remove_hardlink(fs, inode);
+        }
+        else {
+            printf("idk\n");
+        }
+    }
+
+    bool found = false;
+    INode *parent = fs_getINode(fs, directory->directory.parent);
+    for(size_t i = 0; i < FS_INODE_DIRECTORY_CHILDREN_LEN; i++) {
+        if(fs_getINode(fs, parent->directory.children[i]) == directory) {
+            found = true;
+            parent->directory.children[i] = (i == FS_INODE_DIRECTORY_CHILDREN_LEN - 1) ? FS_NONE : parent->directory.children[i + 1];
+        }
+    }
+
+    directory->type = FS_INODE_UNUSED;
 
     return found;
 }
